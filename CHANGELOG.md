@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Container update entities now show a real application version** (e.g. `v3.1.0`)
+  as the installed version, read from the image's own
+  `org.opencontainers.image.version` label when the image author set one —
+  instead of the raw image reference (e.g. `ghcr.io/imagegenius/immich:openvino`).
+  Falls back to the previous digest/tag-based value when no such label exists.
+  There's no equivalent for the latest/available version yet: Dockhand's own
+  update check only ever compares image digests, not labels, of the
+  not-yet-pulled image, so `latest_version` is unchanged for now.
+- **Update entities now link to the image's changelog/release notes**, shown in
+  the entity's "What's new" dialog alongside the existing image name and
+  scanner/system-container notices, when one can be resolved from the image's
+  labels — an explicit `dockhand.changelog.url` label, the OCI
+  `org.opencontainers.image.source` label (when it points at GitHub), or,
+  for `ghcr.io` images with neither, inferred from the image path itself.
+  No link is shown when none of these resolve (e.g. unlabelled Docker Hub
+  images).
+
 ## [1.9.0] — 2026-07-30
 
 ### Added
@@ -926,7 +947,7 @@ No-auth installations are unaffected.
 
 Initial stable release.
 
-[Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...HEAD
 [1.8.2]: https://github.com/raetha/ha-dockhand/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/raetha/ha-dockhand/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/raetha/ha-dockhand/compare/v1.7.4...v1.8.0

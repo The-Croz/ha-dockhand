@@ -7,6 +7,44 @@ the reasoning first and only revisit if the stated condition has changed.
 
 ## Deferred
 
+- **A real version number (not a digest) for update entities'
+  `latest_version`.** Confirmed by reading Dockhand's actual source
+  (`Finsys/dockhand`, `checkImageUpdateAvailable` in `src/lib/server/docker.ts`):
+  its registry check only ever fetches the new image's manifest *digest*,
+  never its config blob, so it never sees the new image's
+  `org.opencontainers.image.version` label — the only thing making
+  `installed_version` a real version string (see 1.9.0's Unreleased entry) at
+  all. There is no registry endpoint Dockhand already calls that this
+  integration could piggyback on for the *not-yet-pulled* image; getting a
+  real "v3.1.1"-style `latest_version` needs one of:
+    1. Dockhand itself fetching + exposing the new image's labels (a
+       `check-updates` response field, most likely) — the clean fix, but
+       requires an upstream Dockhand change this integration doesn't control.
+       Worth filing as a Finsys/dockhand feature request.
+    2. This integration querying the container registry directly, bypassing
+       Dockhand — rejected: would mean duplicating registry auth/credential
+       handling (per-registry, private-registry creds) that today lives only
+       in Dockhand, for a thin HA client that's deliberately never talked to
+       a registry directly.
+  Revisit once Dockhand exposes this, or if a strong enough user demand makes
+  option 2's cost worth reconsidering. Until then `latest_version` stays
+  digest-based ("update-pending" sentinel or a short digest), while
+  `installed_version` already benefits from the label lookup.
+
+- **Fetching actual changelog/release-note *text* into the update entity**,
+  rather than just a link to the release page. Considered alongside the
+  changelog-link feature above (1.9.0's Unreleased entry — see
+  `helpers._resolve_changelog_url`, which only *resolves a URL* the same way
+  Dockhand's own frontend does, no fetch). Dockhand has no changelog-text API
+  for container images (its only `/changelog` route is its own self-update
+  history, unrelated). Embedding real text would mean this integration
+  calling out to GitHub's Releases API itself whenever the resolved link is a
+  GitHub repo — a new, independent outbound dependency with its own rate
+  limits/auth considerations, for a class of images (non-GitHub, or GitHub
+  without matching release tags) it wouldn't even work for. A link the user
+  can tap through to is a smaller, honest step; revisit only if this becomes
+  a frequently requested gap.
+
 - **Proper destination-level device grouping for `repo_prune`/`repo_check`/
   `repo_verify` schedule types.** Discovered during the 1.9.0 Schedules
   device-hierarchy work by reading Dockhand's actual `/api/schedules` source

@@ -9,13 +9,16 @@ Covers:
 - _short_digest: both currentDigest and newDigest formats, malformed input
 - installed_version / latest_version: Tier 1 (image tag, update-pending
   cache signal) and Tier 2 (real digests, prioritized over Tier 1 signals)
+- installed_version: org.opencontainers.image.version label takes
+  priority over both tiers when the image author set one
 - available: container in fast data, container missing, env missing,
   coordinator unhealthy (last_update_success=False)
 - release_summary: always None (no longer populated, consistent with HACS)
 - async_release_notes: image name, ha-alert types verified (warning/info),
   scanner info note, system container warning, update disabled, no
   container, scanner+system combo, systemContainer priority over
-  updateDisabled — all computed client-side from container image/labels
+  updateDisabled, changelog link when resolvable from image/labels — all
+  computed client-side from container image/labels
 - _update_supported_features: normal, updateDisabled, systemContainer
 - _handle_coordinator_update: triggers feature refresh
 - async_install: works identically with or without Tier 2 (only ever
@@ -317,6 +320,39 @@ def test_tier2_falls_back_to_tier1_pending_when_no_item_yet():
 
 
 # ---------------------------------------------------------------------------
+# installed_version — OCI version label (takes priority over both tiers)
+# ---------------------------------------------------------------------------
+
+
+def test_installed_version_prefers_oci_label_over_tier1_tag():
+    container = {
+        **CONTAINER_NORMAL,
+        "labels": {"org.opencontainers.image.version": "v3.1.0"},
+    }
+    entity = _make_entity(update_item=None, containers=[container])
+    assert entity.installed_version == "v3.1.0"
+
+
+def test_installed_version_prefers_oci_label_over_tier2_digest():
+    container = {
+        **CONTAINER_NORMAL,
+        "labels": {"org.opencontainers.image.version": "v3.1.0"},
+    }
+    entity = _make_entity(ITEM_UP_TO_DATE, containers=[container])
+    assert entity.installed_version == "v3.1.0"
+
+
+def test_installed_version_falls_back_to_digest_when_no_label():
+    entity = _make_entity(ITEM_UP_TO_DATE, containers=[CONTAINER_NORMAL])
+    assert entity.installed_version == "53bb1e23fb30"
+
+
+def test_installed_version_falls_back_to_tag_when_no_label_or_tier2():
+    entity = _make_entity(update_item=None, containers=[CONTAINER_NORMAL])
+    assert entity.installed_version == "nginx:latest"
+
+
+# ---------------------------------------------------------------------------
 # available
 # ---------------------------------------------------------------------------
 
@@ -472,6 +508,22 @@ async def test_release_notes_work_without_tier2_data_at_all():
     notes = await entity.async_release_notes()
     assert notes is not None
     assert "nginx:latest" in notes
+
+
+async def test_release_notes_includes_changelog_link_when_resolvable():
+    container = {**CONTAINER_NORMAL, "image": "ghcr.io/imagegenius/immich:openvino"}
+    entity = _make_entity(containers=[container])
+    notes = await entity.async_release_notes()
+    assert notes is not None
+    assert "https://github.com/imagegenius/immich/releases" in notes
+
+
+async def test_release_notes_omits_changelog_link_when_unresolvable():
+    """Docker Hub image with no source label — no changelog URL to show."""
+    entity = _make_entity(containers=[CONTAINER_NORMAL])
+    notes = await entity.async_release_notes()
+    assert notes is not None
+    assert "release notes" not in notes.lower()
 
 
 # ---------------------------------------------------------------------------
