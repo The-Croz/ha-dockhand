@@ -665,6 +665,94 @@ def _is_update_disabled_by_label(labels: dict | None) -> bool:
     return value.strip().lower() in _FALSY_LABEL_VALUES
 
 
+_OCI_VERSION_LABEL = "org.opencontainers.image.version"
+
+
+def _image_version_label(labels: dict | None) -> str | None:
+    """Return the running container's baked-in application version (e.g.
+    'v3.1.0') from the OCI-standard org.opencontainers.image.version label,
+    when the image author set one.
+
+    Most maintained images do set this, even when the pull tag itself is a
+    floating/variant name (e.g. 'openvino', 'latest') that never changes
+    across releases and is therefore useless as a version string on its
+    own. Docker copies image config labels onto the container at creation
+    time, so this reads straight off the container's already-fetched
+    labels — no extra API call.
+
+    Only reflects the *currently installed* image. Dockhand's own registry
+    check (checkImageUpdateAvailable in its docker.ts) only ever compares
+    manifest digests, never fetches the remote image's config/labels, so
+    there is no equivalent label for the not-yet-pulled "latest" image to
+    pair this with — see latest_version's docstring in update.py.
+    """
+    if not labels:
+        return None
+    value = labels.get(_OCI_VERSION_LABEL)
+    return value.strip() if value and value.strip() else None
+
+
+_GITHUB_HOST = "github.com"
+_GHCR_PREFIX = "ghcr.io/"
+
+
+def _strip_image_tag(image: str) -> str:
+    """Strip a trailing ':tag' from an image reference (keeping any
+    '@sha256:...' digest suffix out of the result too). A colon that comes
+    before the last '/' is a registry host port, not a tag, and is left
+    alone — e.g. 'registry.example.com:5000/nginx' has no tag to strip."""
+    without_digest = image.split("@", 1)[0]
+    colon_idx = without_digest.rfind(":")
+    slash_idx = without_digest.rfind("/")
+    if colon_idx > slash_idx:
+        return without_digest[:colon_idx]
+    return without_digest
+
+
+def _resolve_changelog_url(image_name: str | None, labels: dict | None) -> str | None:
+    """Resolve a changelog / release-notes URL for a container image.
+
+    Mirrors Dockhand's own resolveChangelogUrl() (src/lib/utils/changelog-url.ts,
+    Finsys/dockhand#538) exactly, same priority order:
+      1. `dockhand.changelog.url` label — explicit override set by the
+         image author or at runtime, wins over everything.
+      2. `org.opencontainers.image.source` label, when it points at
+         github.com — the canonical changelog page is `<source>/releases`.
+      3. ghcr.io images — `ghcr.io/<owner>/<repo>` is always the same repo
+         as `github.com/<owner>/<repo>`, so the release page is
+         deterministic even without a source label.
+
+    Deliberately no Docker Hub fuzzy-matching, same as upstream: a
+    wrong-repo guess is worse than no link, and there's no good answer for
+    an unlabelled image like `nginx:latest` whose changelog isn't on
+    GitHub at all.
+
+    Reuses data (image, labels) already on the container from the fast
+    coordinator's regular container list — no extra API call, same
+    reasoning as _is_update_disabled_by_label above.
+    """
+    if not image_name:
+        return None
+
+    labels = labels or {}
+    override = labels.get("dockhand.changelog.url")
+    if override and override.strip():
+        return override.strip()
+
+    source = labels.get("org.opencontainers.image.source")
+    if source and _GITHUB_HOST in source:
+        return source.rstrip("/") + "/releases"
+
+    if image_name.startswith(_GHCR_PREFIX):
+        repo = _strip_image_tag(image_name[len(_GHCR_PREFIX) :])
+        # GHCR images are always owner/repo — a single-segment value like
+        # 'ghcr.io/something' is malformed, skip rather than emit a bad URL.
+        if "/" in repo:
+            return f"https://{_GITHUB_HOST}/{repo}/releases"
+
+    return None
+
+
 def _compose_project(container: dict | None) -> str | None:
     """Return the Compose project name for a container, or None if freestanding.
 

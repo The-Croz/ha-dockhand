@@ -50,14 +50,41 @@ configured vulnerabilityCriteria. Progress is reported via
 update_percentage, derived from polling GET /api/jobs/{id}.
 
 Version string strategy:
-  installed_version — Tier 2: first 12 hex chars of the sha256 from
-                      currentDigest ("image@sha256:<hex>"). Tier 1
-                      (no Tier 2 data yet): the container's image tag.
+  installed_version — Preferred: the running container's
+                      org.opencontainers.image.version label (e.g.
+                      "v3.1.0"), when the image author set one — see
+                      helpers._image_version_label. Falls back to Tier 2's
+                      first 12 hex chars of the sha256 from currentDigest
+                      ("image@sha256:<hex>") when no such label exists.
+                      Final fallback (no label, no Tier 2 data yet): the
+                      container's image tag.
   latest_version    — Tier 2 hasUpdate=True: first 12 hex chars of
                       newDigest ("sha256:<hex>", no image prefix).
                       Tier 1 only, cache flagged: "update-pending"
                       (deliberately not a real digest/version string).
                       Otherwise: same as installed_version.
+
+                      No equivalent OCI-label lookup for latest_version:
+                      Dockhand's own registry check (checkImageUpdateAvailable
+                      in its docker.ts) only ever compares manifest digests,
+                      never fetches the remote image's config/labels, so
+                      there is no real "v3.1.1"-style version number
+                      available for the not-yet-pulled image — only for the
+                      one already running. Getting a true version number
+                      here would need Dockhand itself to fetch and expose
+                      the new image's labels (tracked upstream, not yet
+                      shipped as of this writing).
+
+Changelog / release notes:
+  async_release_notes() links out to the image's changelog/release page
+  when one can be resolved from its labels (or inferred for ghcr.io
+  images) — see helpers._resolve_changelog_url, which mirrors Dockhand's
+  own resolveChangelogUrl() exactly. This is a link, not fetched changelog
+  text: Dockhand has no changelog-text endpoint for container images (its
+  only /changelog route is Dockhand's own self-update history), and
+  fetching arbitrary upstream release notes ourselves would mean this
+  integration reaching out to GitHub (or wherever) directly, independent
+  of Dockhand entirely — out of scope here.
 
 systemContainer/updateDisabled (whether Install is offered at all) used
 to only be known via check-updates. systemContainer is Dockhand's own
@@ -90,7 +117,9 @@ from .helpers import (
     _all_envs,
     _coordinator_env,
     _find_container,
+    _image_version_label,
     _is_update_disabled_by_label,
+    _resolve_changelog_url,
     already_registered,
 )
 
@@ -304,12 +333,19 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
 
     @property
     def installed_version(self) -> str | None:
+        c = self._container()
+        version = _image_version_label((c or {}).get("labels"))
+        if version:
+            # A real application version (e.g. "v3.1.0") beats a digest or
+            # raw tag whenever the image author bothered to label it —
+            # available from Tier 1 data alone, no Tier 2 required.
+            return version
         digest = self._check_updates_item().get("currentDigest", "")
         if digest:
             return _short_digest(digest)
-        # Tier 1 fallback: no real digest available yet, show the image
-        # tag instead — still meaningful, just not a precise version.
-        c = self._container()
+        # Final fallback: no label, no real digest available yet — show
+        # the image tag instead, still meaningful, just not a precise
+        # version.
         return (c or {}).get("image") or None
 
     def _pending_via_dockhand_cache(self) -> bool:
@@ -358,6 +394,10 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
         image_name = c.get("image")
         if image_name:
             parts.append(f"Image: {image_name}")
+
+        changelog_url = _resolve_changelog_url(image_name, c.get("labels"))
+        if changelog_url:
+            parts.append(f"[View release notes / changelog]({changelog_url})")
 
         if self._scanner_enabled():
             msg = (

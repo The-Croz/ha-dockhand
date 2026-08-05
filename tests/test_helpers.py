@@ -11,6 +11,9 @@ Covers:
 - _image_display_name: tagged, untagged, multi-tag, empty
 - _container_has_healthcheck: all states
 - _compose_project: with/without label, None container
+- _image_version_label: OCI label present/absent/blank, no labels
+- _resolve_changelog_url: dockhand.changelog.url override, github source
+  label, ghcr.io inference, no-match cases (Docker Hub, malformed ghcr.io)
 - _ensure_env_devices: all device creation branches
 - _ensure_hub_devices: schedules hub and per-schedule devices
 """
@@ -37,9 +40,11 @@ from custom_components.dockhand.helpers import (
     _image_display_name,
     _image_group_device,
     _image_url,
+    _image_version_label,
     _is_update_disabled_by_label,
     _network_group_device,
     _network_url,
+    _resolve_changelog_url,
     _sched_device,
     _sched_key,
     _schedules_url,
@@ -440,6 +445,109 @@ def test_compose_project_none_for_no_labels():
 
 def test_compose_project_none_for_none_container():
     assert _compose_project(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _image_version_label
+# ---------------------------------------------------------------------------
+
+
+def test_image_version_label_returns_labeled_version():
+    labels = {"org.opencontainers.image.version": "v3.1.0"}
+    assert _image_version_label(labels) == "v3.1.0"
+
+
+def test_image_version_label_strips_whitespace():
+    labels = {"org.opencontainers.image.version": "  v3.1.0  "}
+    assert _image_version_label(labels) == "v3.1.0"
+
+
+def test_image_version_label_none_when_absent():
+    assert _image_version_label({"other.label": "x"}) is None
+
+
+def test_image_version_label_none_when_blank():
+    assert _image_version_label({"org.opencontainers.image.version": "   "}) is None
+
+
+def test_image_version_label_none_for_no_labels():
+    assert _image_version_label(None) is None
+    assert _image_version_label({}) is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_changelog_url
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_changelog_url_explicit_override_wins():
+    labels = {
+        "dockhand.changelog.url": "https://example.com/notes",
+        "org.opencontainers.image.source": "https://github.com/owner/repo",
+    }
+    assert (
+        _resolve_changelog_url("ghcr.io/owner/repo:latest", labels)
+        == "https://example.com/notes"
+    )
+
+
+def test_resolve_changelog_url_from_github_source_label():
+    labels = {"org.opencontainers.image.source": "https://github.com/owner/repo"}
+    assert (
+        _resolve_changelog_url("registry.example.com/owner/repo:latest", labels)
+        == "https://github.com/owner/repo/releases"
+    )
+
+
+def test_resolve_changelog_url_strips_trailing_slash_from_source():
+    labels = {"org.opencontainers.image.source": "https://github.com/owner/repo/"}
+    assert (
+        _resolve_changelog_url("owner/repo:latest", labels)
+        == "https://github.com/owner/repo/releases"
+    )
+
+
+def test_resolve_changelog_url_ghcr_inference_no_source_label():
+    assert (
+        _resolve_changelog_url("ghcr.io/imagegenius/immich:openvino", None)
+        == "https://github.com/imagegenius/immich/releases"
+    )
+
+
+def test_resolve_changelog_url_ghcr_inference_strips_digest():
+    assert (
+        _resolve_changelog_url("ghcr.io/imagegenius/immich@sha256:53bb1e23fb302f", None)
+        == "https://github.com/imagegenius/immich/releases"
+    )
+
+
+def test_resolve_changelog_url_none_for_docker_hub_image():
+    assert _resolve_changelog_url("nginx:latest", None) is None
+
+
+def test_resolve_changelog_url_none_for_malformed_ghcr_image():
+    assert _resolve_changelog_url("ghcr.io/something", None) is None
+
+
+def test_resolve_changelog_url_none_for_non_github_source():
+    labels = {"org.opencontainers.image.source": "https://gitlab.com/owner/repo"}
+    assert _resolve_changelog_url("owner/repo:latest", labels) is None
+
+
+def test_resolve_changelog_url_none_for_no_image_name():
+    assert _resolve_changelog_url(None, {"dockhand.changelog.url": "x"}) is None
+    assert _resolve_changelog_url("", {"dockhand.changelog.url": "x"}) is None
+
+
+def test_resolve_changelog_url_blank_override_falls_through():
+    labels = {
+        "dockhand.changelog.url": "   ",
+        "org.opencontainers.image.source": "https://github.com/owner/repo",
+    }
+    assert (
+        _resolve_changelog_url("owner/repo:latest", labels)
+        == "https://github.com/owner/repo/releases"
+    )
 
 
 # ---------------------------------------------------------------------------
