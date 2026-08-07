@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-08-07
+
 ### Added
 
 - **Container update entities now show a real application version** (e.g. `v3.1.0`)
@@ -949,7 +951,8 @@ No-auth installations are unaffected.
 
 Initial stable release.
 
-[Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...v1.10.0
 [1.8.2]: https://github.com/raetha/ha-dockhand/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/raetha/ha-dockhand/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/raetha/ha-dockhand/compare/v1.7.4...v1.8.0
