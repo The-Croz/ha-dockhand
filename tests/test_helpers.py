@@ -14,6 +14,8 @@ Covers:
 - _image_version_label: OCI label present/absent/blank, no labels
 - _resolve_changelog_url: dockhand.changelog.url override, github source
   label, ghcr.io inference, no-match cases (Docker Hub, malformed ghcr.io)
+- _github_owner_repo: extraction from a resolved GitHub releases URL,
+  None for non-GitHub / malformed URLs
 - _ensure_env_devices: all device creation branches
 - _ensure_hub_devices: schedules hub and per-schedule devices
 """
@@ -37,6 +39,7 @@ from custom_components.dockhand.helpers import (
     _ensure_hub_devices,
     _env_device,
     _env_settings_url,
+    _github_owner_repo,
     _image_display_name,
     _image_group_device,
     _image_url,
@@ -548,6 +551,34 @@ def test_resolve_changelog_url_blank_override_falls_through():
         _resolve_changelog_url("owner/repo:latest", labels)
         == "https://github.com/owner/repo/releases"
     )
+
+
+# ---------------------------------------------------------------------------
+# _github_owner_repo
+# ---------------------------------------------------------------------------
+
+
+def test_github_owner_repo_extracts_from_resolved_url():
+    assert _github_owner_repo("https://github.com/imagegenius/immich/releases") == (
+        "imagegenius",
+        "immich",
+    )
+
+
+def test_github_owner_repo_none_for_non_github_url():
+    assert _github_owner_repo("https://example.com/notes") is None
+
+
+def test_github_owner_repo_none_for_none():
+    assert _github_owner_repo(None) is None
+
+
+def test_github_owner_repo_none_for_gitlab():
+    assert _github_owner_repo("https://gitlab.com/owner/repo/releases") is None
+
+
+def test_github_owner_repo_none_for_malformed_extra_path():
+    assert _github_owner_repo("https://github.com/owner/repo/releases/tag/v1") is None
 
 
 # ---------------------------------------------------------------------------

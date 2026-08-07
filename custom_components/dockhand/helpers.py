@@ -6,6 +6,7 @@ dependencies.  Platform modules (sensor.py etc.) are loaded lazily by HA and
 must never be imported by __init__.py or by each other.
 """
 
+import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -751,6 +752,29 @@ def _resolve_changelog_url(image_name: str | None, labels: dict | None) -> str |
             return f"https://{_GITHUB_HOST}/{repo}/releases"
 
     return None
+
+
+_GITHUB_REPO_RELEASES_RE = re.compile(
+    r"^https://github\.com/([^/]+)/([^/]+)/releases/?$"
+)
+
+
+def _github_owner_repo(changelog_url: str | None) -> tuple[str, str] | None:
+    """Extract (owner, repo) from a GitHub releases URL as shaped by
+    _resolve_changelog_url (e.g. 'https://github.com/imagegenius/immich/releases'
+    -> ('imagegenius', 'immich')).
+
+    None for anything _resolve_changelog_url could still return that isn't
+    this exact shape — most notably an explicit dockhand.changelog.url
+    override pointing somewhere other than a GitHub releases page. That
+    distinction matters to callers: this is used to decide whether it's
+    safe to hit the *GitHub API* for embedded release notes text, which
+    must never happen for an arbitrary user-supplied URL.
+    """
+    if not changelog_url:
+        return None
+    match = _GITHUB_REPO_RELEASES_RE.match(changelog_url)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def _compose_project(container: dict | None) -> str | None:

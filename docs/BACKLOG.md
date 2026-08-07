@@ -31,19 +31,24 @@ the reasoning first and only revisit if the stated condition has changed.
   digest-based ("update-pending" sentinel or a short digest), while
   `installed_version` already benefits from the label lookup.
 
-- **Fetching actual changelog/release-note *text* into the update entity**,
-  rather than just a link to the release page. Considered alongside the
-  changelog-link feature above (1.9.0's Unreleased entry — see
-  `helpers._resolve_changelog_url`, which only *resolves a URL* the same way
-  Dockhand's own frontend does, no fetch). Dockhand has no changelog-text API
-  for container images (its only `/changelog` route is its own self-update
-  history, unrelated). Embedding real text would mean this integration
-  calling out to GitHub's Releases API itself whenever the resolved link is a
-  GitHub repo — a new, independent outbound dependency with its own rate
-  limits/auth considerations, for a class of images (non-GitHub, or GitHub
-  without matching release tags) it wouldn't even work for. A link the user
-  can tap through to is a smaller, honest step; revisit only if this becomes
-  a frequently requested gap.
+- **Caching / auth for the embedded-GitHub-release-notes fetch.** Shipped in
+  the 1.9.0 Unreleased cycle (`update.py`'s `_fetch_github_latest_release`,
+  after initially being deferred as "link only" — reversed on explicit user
+  request): async_release_notes() now embeds the target repo's latest
+  published GitHub release (tag + Markdown body) instead of only linking to
+  it, for any changelog URL that resolves to a GitHub repo. Deliberately
+  unauthenticated (no GitHub credentials configured anywhere in this
+  integration) and uncached — acceptable today because it's only ever called
+  from HA's release-notes flow, which fires on-demand when a user opens an
+  entity's more-info dialog, never from a coordinator poll. Revisit (add a
+  short-lived cache keyed by owner/repo, and/or an optional PAT config field
+  for a higher rate limit) only if real-world usage shows the ~60
+  requests/hour unauthenticated GitHub limit actually being hit — e.g. a
+  dashboard view or automation that ends up opening many such dialogs in a
+  short window. Also note: this shows the *latest published* release, not
+  necessarily the exact version the image's tag will resolve to on the next
+  pull — same "no real latest_version" limitation as the item above, just
+  applied to notes instead of a version string.
 
 - **Proper destination-level device grouping for `repo_prune`/`repo_check`/
   `repo_verify` schedule types.** Discovered during the 1.9.0 Schedules

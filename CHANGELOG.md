@@ -12,14 +12,16 @@
   There's no equivalent for the latest/available version yet: Dockhand's own
   update check only ever compares image digests, not labels, of the
   not-yet-pulled image, so `latest_version` is unchanged for now.
-- **Update entities now link to the image's changelog/release notes**, shown in
-  the entity's "What's new" dialog alongside the existing image name and
-  scanner/system-container notices, when one can be resolved from the image's
-  labels — an explicit `dockhand.changelog.url` label, the OCI
+- **Update entities now show the image's changelog/release notes**, in the
+  entity's "What's new" dialog alongside the existing image name and
+  scanner/system-container notices, when one can be resolved from the
+  image's labels — an explicit `dockhand.changelog.url` label, the OCI
   `org.opencontainers.image.source` label (when it points at GitHub), or,
   for `ghcr.io` images with neither, inferred from the image path itself.
-  No link is shown when none of these resolve (e.g. unlabelled Docker Hub
-  images).
+  When the resolved page is a GitHub repo, the latest published release's
+  notes are fetched and shown directly (as Markdown) alongside a link to
+  the full release page; for anything else, just the link is shown. Nothing
+  is shown when none of these resolve (e.g. unlabelled Docker Hub images).
 
 ## [1.9.0] — 2026-07-30
 

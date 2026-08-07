@@ -76,15 +76,33 @@ Version string strategy:
                       shipped as of this writing).
 
 Changelog / release notes:
-  async_release_notes() links out to the image's changelog/release page
-  when one can be resolved from its labels (or inferred for ghcr.io
+  async_release_notes() always links out to the image's changelog/release
+  page when one can be resolved from its labels (or inferred for ghcr.io
   images) — see helpers._resolve_changelog_url, which mirrors Dockhand's
-  own resolveChangelogUrl() exactly. This is a link, not fetched changelog
-  text: Dockhand has no changelog-text endpoint for container images (its
-  only /changelog route is Dockhand's own self-update history), and
-  fetching arbitrary upstream release notes ourselves would mean this
-  integration reaching out to GitHub (or wherever) directly, independent
-  of Dockhand entirely — out of scope here.
+  own resolveChangelogUrl() exactly. Dockhand has no changelog-text
+  endpoint for container images (its only /changelog route is Dockhand's
+  own self-update history), so that link is the only thing Dockhand itself
+  can give us.
+
+  When the resolved link is specifically a GitHub releases page (see
+  helpers._github_owner_repo), _fetch_github_latest_release() additionally
+  fetches that repo's latest published release from GitHub's own public
+  API and embeds its tag + body as Markdown, so the dialog shows real
+  notes instead of just a link out. This is a deliberate, independent
+  outbound call to GitHub — nothing to do with Dockhand — made only
+  on-demand when a user opens the entity's more-info dialog (HA's
+  release-notes flow is never polled), unauthenticated (this integration
+  holds no GitHub credentials, so it's subject to GitHub's ~60
+  requests/hour per-IP limit), and always best-effort: any failure
+  (network, rate limit, no releases published) silently falls back to the
+  plain link, never raises, and never blocks Install.
+
+  This shows the *latest published* GitHub release, not necessarily the
+  exact version the image's tag would resolve to on the next pull — the
+  same limitation described in latest_version's docstring above means
+  there's no way to know that from this integration's data alone. It's the
+  best available approximation of "what's new", same tradeoff a bare link
+  already had.
 
 systemContainer/updateDisabled (whether Install is offered at all) used
 to only be known via check-updates. systemContainer is Dockhand's own
@@ -106,6 +124,7 @@ from typing import Any
 from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -117,6 +136,7 @@ from .helpers import (
     _all_envs,
     _coordinator_env,
     _find_container,
+    _github_owner_repo,
     _image_version_label,
     _is_update_disabled_by_label,
     _resolve_changelog_url,
@@ -171,6 +191,49 @@ def _short_digest(digest: str) -> str:
         return sha_part[:12] if sha_part else digest
     except Exception:
         return digest
+
+
+_GITHUB_API_TIMEOUT = 10  # seconds — best-effort only, must never hang the dialog
+_RELEASE_NOTES_MAX_CHARS = 4000  # cap runaway release bodies (screenshots, etc.)
+
+
+async def _fetch_github_latest_release(
+    hass: HomeAssistant, owner: str, repo: str
+) -> dict | None:
+    """Best-effort GET of a GitHub repo's latest published release.
+
+    Public, unauthenticated GitHub API call — this integration holds no
+    GitHub credentials, so it's subject to GitHub's unauthenticated rate
+    limit (~60 requests/hour per source IP). Acceptable here because this
+    is only ever invoked from async_release_notes(), itself only called
+    on-demand when a user opens an update entity's more-info dialog (HA's
+    release-notes flow, never polled by a coordinator).
+
+    Returns None on any failure (network error, rate limited, repo has no
+    releases, etc.) — a missing embedded changelog must never break the
+    entity or its Install button; the plain link to the releases page
+    (built independently by helpers._resolve_changelog_url) keeps working
+    regardless of whether this call succeeds.
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    try:
+        session = async_get_clientsession(hass)
+        async with asyncio.timeout(_GITHUB_API_TIMEOUT):
+            resp = await session.get(
+                url, headers={"Accept": "application/vnd.github+json"}
+            )
+            if resp.status != 200:
+                return None
+            return await resp.json()
+    except Exception as err:
+        _LOGGER.debug(
+            "Could not fetch GitHub release notes for %s/%s: %s: %s",
+            owner,
+            repo,
+            type(err).__name__,
+            err,
+        )
+        return None
 
 
 async def async_setup_entry(
@@ -384,6 +447,37 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
         """Not used — release notes cover all warning content."""
         return None
 
+    async def _changelog_section(self, changelog_url: str | None) -> str | None:
+        """Build the changelog part of the release notes.
+
+        For a resolved GitHub releases URL, tries to embed the latest
+        published release's tag + Markdown body (see
+        _fetch_github_latest_release for the on-demand, best-effort,
+        unauthenticated GitHub API call this makes). Falls back to just
+        the plain link — for a non-GitHub changelog_url, when the GitHub
+        fetch fails, or when self.hass isn't set (never added to hass,
+        e.g. in unit tests) since async_get_clientsession needs it.
+        """
+        if not changelog_url:
+            return None
+
+        owner_repo = _github_owner_repo(changelog_url)
+        if owner_repo and self.hass is not None:
+            release = await _fetch_github_latest_release(self.hass, *owner_repo)
+            body = (release or {}).get("body") or ""
+            body = body.strip()
+            if body:
+                if len(body) > _RELEASE_NOTES_MAX_CHARS:
+                    body = (
+                        body[:_RELEASE_NOTES_MAX_CHARS].rstrip() + "\n\n… (truncated)"
+                    )
+                tag = release.get("tag_name")
+                heading = f"### Latest release: {tag}" if tag else "### Latest release"
+                html_url = release.get("html_url") or changelog_url
+                return f"{heading}\n\n{body}\n\n[View full release notes]({html_url})"
+
+        return f"[View release notes / changelog]({changelog_url})"
+
     async def async_release_notes(self) -> str | None:
         """Full release notes shown in the more-info dialog — supports Markdown."""
         c = self._container()
@@ -396,8 +490,9 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
             parts.append(f"Image: {image_name}")
 
         changelog_url = _resolve_changelog_url(image_name, c.get("labels"))
-        if changelog_url:
-            parts.append(f"[View release notes / changelog]({changelog_url})")
+        changelog_section = await self._changelog_section(changelog_url)
+        if changelog_section:
+            parts.append(changelog_section)
 
         if self._scanner_enabled():
             msg = (

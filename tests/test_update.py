@@ -19,6 +19,11 @@ Covers:
   container, scanner+system combo, systemContainer priority over
   updateDisabled, changelog link when resolvable from image/labels — all
   computed client-side from container image/labels
+- async_release_notes / _fetch_github_latest_release: embedded GitHub
+  release notes when hass is set and the changelog URL resolves to a
+  GitHub repo, falls back to a plain link without hass, on fetch failure,
+  on an empty release body, or for a non-GitHub changelog URL (never
+  calls the GitHub API for those); truncates long release bodies
 - _update_supported_features: normal, updateDisabled, systemContainer
 - _handle_coordinator_update: triggers feature refresh
 - async_install: works identically with or without Tier 2 (only ever
@@ -524,6 +529,166 @@ async def test_release_notes_omits_changelog_link_when_unresolvable():
     notes = await entity.async_release_notes()
     assert notes is not None
     assert "release notes" not in notes.lower()
+
+
+# ---------------------------------------------------------------------------
+# async_release_notes — embedded GitHub release notes
+# ---------------------------------------------------------------------------
+
+GITHUB_CONTAINER = {
+    **CONTAINER_NORMAL,
+    "image": "ghcr.io/imagegenius/immich:openvino",
+}
+
+FAKE_RELEASE = {
+    "tag_name": "v3.1.1",
+    "html_url": "https://github.com/imagegenius/immich/releases/tag/v3.1.1",
+    "body": "## What's Changed\n\n- Fixed a bug\n- Added a feature",
+}
+
+
+async def test_release_notes_embeds_github_release_when_hass_set():
+    entity = _make_entity(containers=[GITHUB_CONTAINER])
+    entity.hass = MagicMock()
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value=FAKE_RELEASE),
+    ) as mock_fetch:
+        notes = await entity.async_release_notes()
+    mock_fetch.assert_called_once_with(entity.hass, "imagegenius", "immich")
+    assert notes is not None
+    assert "### Latest release: v3.1.1" in notes
+    assert "Fixed a bug" in notes
+    assert (
+        "[View full release notes](https://github.com/imagegenius/immich/releases/tag/v3.1.1)"
+        in notes
+    )
+
+
+async def test_release_notes_no_embed_without_hass():
+    """Entity never added to hass (e.g. in tests) — falls back to a plain
+    link rather than attempting the GitHub API call at all."""
+    entity = _make_entity(containers=[GITHUB_CONTAINER])
+    assert entity.hass is None
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value=FAKE_RELEASE),
+    ) as mock_fetch:
+        notes = await entity.async_release_notes()
+    mock_fetch.assert_not_called()
+    assert notes is not None
+    assert "https://github.com/imagegenius/immich/releases" in notes
+    assert "### Latest release" not in notes
+
+
+async def test_release_notes_falls_back_to_link_when_fetch_fails():
+    entity = _make_entity(containers=[GITHUB_CONTAINER])
+    entity.hass = MagicMock()
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value=None),
+    ):
+        notes = await entity.async_release_notes()
+    assert notes is not None
+    assert "https://github.com/imagegenius/immich/releases" in notes
+    assert "### Latest release" not in notes
+
+
+async def test_release_notes_falls_back_to_link_when_release_has_no_body():
+    entity = _make_entity(containers=[GITHUB_CONTAINER])
+    entity.hass = MagicMock()
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value={"tag_name": "v3.1.1", "body": ""}),
+    ):
+        notes = await entity.async_release_notes()
+    assert notes is not None
+    assert "### Latest release" not in notes
+    assert "https://github.com/imagegenius/immich/releases" in notes
+
+
+async def test_release_notes_truncates_long_release_body():
+    from custom_components.dockhand.update import _RELEASE_NOTES_MAX_CHARS
+
+    entity = _make_entity(containers=[GITHUB_CONTAINER])
+    entity.hass = MagicMock()
+    long_release = {**FAKE_RELEASE, "body": "x" * (_RELEASE_NOTES_MAX_CHARS + 500)}
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value=long_release),
+    ):
+        notes = await entity.async_release_notes()
+    assert notes is not None
+    assert "(truncated)" in notes
+    assert "x" * (_RELEASE_NOTES_MAX_CHARS + 1) not in notes
+
+
+async def test_release_notes_no_github_fetch_for_non_github_changelog_url():
+    """An explicit dockhand.changelog.url override pointing off-GitHub must
+    never trigger a GitHub API call."""
+    container = {
+        **CONTAINER_NORMAL,
+        "labels": {"dockhand.changelog.url": "https://example.com/notes"},
+    }
+    entity = _make_entity(containers=[container])
+    entity.hass = MagicMock()
+    with patch(
+        "custom_components.dockhand.update._fetch_github_latest_release",
+        AsyncMock(return_value=FAKE_RELEASE),
+    ) as mock_fetch:
+        notes = await entity.async_release_notes()
+    mock_fetch.assert_not_called()
+    assert notes is not None
+    assert "https://example.com/notes" in notes
+
+
+async def test_fetch_github_latest_release_returns_none_on_non_200():
+    from custom_components.dockhand.update import _fetch_github_latest_release
+
+    hass = MagicMock()
+    session = MagicMock()
+    resp = AsyncMock()
+    resp.status = 404
+    session.get = AsyncMock(return_value=resp)
+    with patch(
+        "custom_components.dockhand.update.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await _fetch_github_latest_release(hass, "owner", "repo")
+    assert result is None
+
+
+async def test_fetch_github_latest_release_returns_none_on_exception():
+    from custom_components.dockhand.update import _fetch_github_latest_release
+
+    hass = MagicMock()
+    with patch(
+        "custom_components.dockhand.update.async_get_clientsession",
+        side_effect=Exception("boom"),
+    ):
+        result = await _fetch_github_latest_release(hass, "owner", "repo")
+    assert result is None
+
+
+async def test_fetch_github_latest_release_returns_json_on_success():
+    from custom_components.dockhand.update import _fetch_github_latest_release
+
+    hass = MagicMock()
+    session = MagicMock()
+    resp = AsyncMock()
+    resp.status = 200
+    resp.json = AsyncMock(return_value=FAKE_RELEASE)
+    session.get = AsyncMock(return_value=resp)
+    with patch(
+        "custom_components.dockhand.update.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await _fetch_github_latest_release(hass, "imagegenius", "immich")
+    assert result == FAKE_RELEASE
+    session.get.assert_called_once_with(
+        "https://api.github.com/repos/imagegenius/immich/releases/latest",
+        headers={"Accept": "application/vnd.github+json"},
+    )
 
 
 # ---------------------------------------------------------------------------
