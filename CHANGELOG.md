@@ -2,11 +2,26 @@
 
 ## [Unreleased]
 
+**ha-dockhand-cards users:** this release includes upstream 1.9.1's device
+identifier format change, which requires ha-dockhand-cards 1.2.1 or later.
+
 ### Changed
 
 - **Update entities' release notes no longer start with an `Image: …` line.**
   The image reference was redundant there; the dialog now opens straight on
   the changelog and any scanner/system-container notices.
+- **Includes upstream fixes from raetha/ha-dockhand 1.9.1–1.9.4** (see those
+  sections below): no device collisions with two Dockhand instances in the
+  same Home Assistant, transient 401s no longer prompt for
+  re-authentication, no more duplicate device/entity errors after Docker
+  daemon recovery or after applying container updates, and the
+  `via_device` deprecation warning is gone.
+
+### Fixed
+
+- **GitHub release-notes fetch no longer holds a connection open** when
+  GitHub returns an error (e.g. rate limited); the response is now always
+  released.
 
 ## [1.10.0] — 2026-08-07
 
@@ -1089,8 +1104,8 @@ No-auth installations are unaffected.
 
 Initial stable release.
 
-[Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.10.0...HEAD
-[1.10.0]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...v1.10.0
+[Unreleased]: https://github.com/The-Croz/ha-dockhand/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/The-Croz/ha-dockhand/releases/tag/v1.10.0
 [1.9.4]: https://github.com/raetha/ha-dockhand/compare/v1.9.3...v1.9.4
 [1.9.3]: https://github.com/raetha/ha-dockhand/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/raetha/ha-dockhand/compare/v1.9.1...v1.9.2

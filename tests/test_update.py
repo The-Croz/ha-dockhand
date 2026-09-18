@@ -646,6 +646,14 @@ async def test_release_notes_no_github_fetch_for_non_github_changelog_url():
     assert "https://example.com/notes" in notes
 
 
+def _get_ctx(resp):
+    """Mock for session.get(...) used as an async context manager."""
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=resp)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=ctx)
+
+
 async def test_fetch_github_latest_release_returns_none_on_non_200():
     from custom_components.dockhand.update import _fetch_github_latest_release
 
@@ -653,7 +661,7 @@ async def test_fetch_github_latest_release_returns_none_on_non_200():
     session = MagicMock()
     resp = AsyncMock()
     resp.status = 404
-    session.get = AsyncMock(return_value=resp)
+    session.get = _get_ctx(resp)
     with patch(
         "custom_components.dockhand.update.async_get_clientsession",
         return_value=session,
@@ -682,7 +690,7 @@ async def test_fetch_github_latest_release_returns_json_on_success():
     resp = AsyncMock()
     resp.status = 200
     resp.json = AsyncMock(return_value=FAKE_RELEASE)
-    session.get = AsyncMock(return_value=resp)
+    session.get = _get_ctx(resp)
     with patch(
         "custom_components.dockhand.update.async_get_clientsession",
         return_value=session,

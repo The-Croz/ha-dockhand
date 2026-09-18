@@ -13,7 +13,7 @@ the reasoning first and only revisit if the stated condition has changed.
   its registry check only ever fetches the new image's manifest *digest*,
   never its config blob, so it never sees the new image's
   `org.opencontainers.image.version` label — the only thing making
-  `installed_version` a real version string (see 1.9.0's Unreleased entry) at
+  `installed_version` a real version string (added in 1.10.0) at
   all. There is no registry endpoint Dockhand already calls that this
   integration could piggyback on for the *not-yet-pulled* image; getting a
   real "v3.1.1"-style `latest_version` needs one of:
@@ -31,12 +31,11 @@ the reasoning first and only revisit if the stated condition has changed.
   digest-based ("update-pending" sentinel or a short digest), while
   `installed_version` already benefits from the label lookup.
 
-- **Caching / auth for the embedded-GitHub-release-notes fetch.** Shipped in
-  the 1.9.0 Unreleased cycle (`update.py`'s `_fetch_github_latest_release`,
-  after initially being deferred as "link only" — reversed on explicit user
-  request): async_release_notes() now embeds the target repo's latest
-  published GitHub release (tag + Markdown body) instead of only linking to
-  it, for any changelog URL that resolves to a GitHub repo. Deliberately
+- **Caching / auth for the embedded-GitHub-release-notes fetch.** The fetch
+  itself shipped in 1.10.0 (`update.py`'s `_fetch_github_latest_release`):
+  async_release_notes() embeds the target repo's latest published GitHub
+  release (tag + Markdown body) for any changelog URL that resolves to a
+  GitHub repo. What's deferred is only caching and auth for it. Deliberately
   unauthenticated (no GitHub credentials configured anywhere in this
   integration) and uncached — acceptable today because it's only ever called
   from HA's release-notes flow, which fires on-demand when a user opens an

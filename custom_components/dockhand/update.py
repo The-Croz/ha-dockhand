@@ -218,10 +218,10 @@ async def _fetch_github_latest_release(
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
         session = async_get_clientsession(hass)
-        async with asyncio.timeout(_GITHUB_API_TIMEOUT):
-            resp = await session.get(
-                url, headers={"Accept": "application/vnd.github+json"}
-            )
+        async with (
+            asyncio.timeout(_GITHUB_API_TIMEOUT),
+            session.get(url, headers={"Accept": "application/vnd.github+json"}) as resp,
+        ):
             if resp.status != 200:
                 return None
             return await resp.json()
