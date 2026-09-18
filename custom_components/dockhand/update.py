@@ -485,11 +485,7 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
             return None
         parts = []
 
-        image_name = c.get("image")
-        if image_name:
-            parts.append(f"Image: {image_name}")
-
-        changelog_url = _resolve_changelog_url(image_name, c.get("labels"))
+        changelog_url = _resolve_changelog_url(c.get("image"), c.get("labels"))
         changelog_section = await self._changelog_section(changelog_url)
         if changelog_section:
             parts.append(changelog_section)

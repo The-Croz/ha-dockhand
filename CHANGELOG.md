@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Update entities' release notes no longer start with an `Image: …` line.**
+  The image reference was redundant there; the dialog now opens straight on
+  the changelog and any scanner/system-container notices.
+
 ## [1.10.0] — 2026-08-07
 
 ### Added

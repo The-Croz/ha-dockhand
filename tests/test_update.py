@@ -14,7 +14,7 @@ Covers:
 - available: container in fast data, container missing, env missing,
   coordinator unhealthy (last_update_success=False)
 - release_summary: always None (no longer populated, consistent with HACS)
-- async_release_notes: image name, ha-alert types verified (warning/info),
+- async_release_notes: image name omitted, ha-alert types verified (warning/info),
   scanner info note, system container warning, update disabled, no
   container, scanner+system combo, systemContainer priority over
   updateDisabled, changelog link when resolvable from image/labels — all
@@ -433,7 +433,7 @@ def test_supported_features_work_without_tier2_data_at_all():
 
 def test_release_summary_always_none():
     # release_summary is no longer populated — consistent with HACS convention.
-    # Image name and warnings appear in async_release_notes instead.
+    # Warnings appear in async_release_notes instead.
     assert _make_entity(containers=[CONTAINER_NORMAL]).release_summary is None
     assert (
         _make_entity(
@@ -450,11 +450,14 @@ def test_release_summary_always_none():
 # ---------------------------------------------------------------------------
 
 
-async def test_release_notes_includes_image_name():
-    entity = _make_entity(containers=[CONTAINER_NORMAL])
+async def test_release_notes_omits_image_name():
+    # The image reference is already visible elsewhere on the entity — it
+    # isn't repeated at the top of the release notes.
+    entity = _make_entity(containers=[CONTAINER_NORMAL], scanner_enabled=True)
     notes = await entity.async_release_notes()
     assert notes is not None
-    assert "nginx:latest" in notes
+    assert "nginx:latest" not in notes
+    assert "Image:" not in notes
 
 
 async def test_release_notes_includes_scanner_info():
@@ -509,10 +512,11 @@ async def test_release_notes_none_when_container_gone():
 
 
 async def test_release_notes_work_without_tier2_data_at_all():
-    entity = _make_entity(containers=[CONTAINER_NORMAL], update_coordinator=None)
+    container = {**CONTAINER_NORMAL, "image": "ghcr.io/imagegenius/immich:openvino"}
+    entity = _make_entity(containers=[container], update_coordinator=None)
     notes = await entity.async_release_notes()
     assert notes is not None
-    assert "nginx:latest" in notes
+    assert "https://github.com/imagegenius/immich/releases" in notes
 
 
 async def test_release_notes_includes_changelog_link_when_resolvable():
@@ -527,8 +531,8 @@ async def test_release_notes_omits_changelog_link_when_unresolvable():
     """Docker Hub image with no source label — no changelog URL to show."""
     entity = _make_entity(containers=[CONTAINER_NORMAL])
     notes = await entity.async_release_notes()
-    assert notes is not None
-    assert "release notes" not in notes.lower()
+    # Nothing else to show for a plain container either, so no notes at all.
+    assert notes is None
 
 
 # ---------------------------------------------------------------------------
