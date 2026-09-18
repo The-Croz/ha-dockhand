@@ -1443,7 +1443,7 @@ def test_image_containers_using_attribute():
 
 def test_image_device_is_images_group():
     idents = _make_image().device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Images") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Images") in idents
 
 
 # ===========================================================================
@@ -1488,7 +1488,7 @@ def test_network_name_is_network_name():
 
 def test_network_device_is_networks_group():
     idents = _make_network().device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Networks") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Networks") in idents
     assert (DOMAIN, f"network_{NETWORK['id']}") not in idents
 
 
@@ -1546,7 +1546,7 @@ def test_volume_name_is_volume_name():
 
 def test_volume_device_is_volumes_group():
     idents = _make_volume().device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Volumes") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Volumes") in idents
 
 
 # ===========================================================================
@@ -1648,8 +1648,12 @@ def test_schedule_both_sensors_share_device():
 
 
 def test_schedule_device_is_child_of_hub():
-    via = _make_next_run().device_info.get("via_device")
-    assert via == ("dockhand", "schedules_hub")
+    # In unit-test context hass is not set on the entity, so _device_entry_id
+    # returns None and via_device_id is omitted. The parent relationship is
+    # verified at the factory level by test_helpers.py::test_sched_device_via_schedules_hub.
+    info = _make_next_run().device_info
+    assert "via_device" not in info
+    assert "via_device_id" not in info
 
 
 def test_schedule_device_env_scoped_uses_environment_prefix_and_group():
@@ -1663,7 +1667,11 @@ def test_schedule_device_env_scoped_uses_environment_prefix_and_group():
     sched = {**SCHEDULE, "environmentId": 3, "environmentName": "Aurora"}
     info = _make_next_run(sched).device_info
     assert info.get("name") == "Aurora – Schedules – nightly-backup"
-    assert info.get("via_device") == ("dockhand", "env_3_Schedules")
+    # In unit-test context hass is not set on the entity, so via_device_id is
+    # omitted. The parent relationship is verified at the factory level by
+    # test_helpers.py::test_sched_device_env_scoped_via_group_device.
+    assert "via_device" not in info
+    assert "via_device_id" not in info
 
 
 def test_schedule_last_status_not_diagnostic():
@@ -2234,7 +2242,7 @@ def test_stack_device_helper_name_format():
     """_stack_device() must produce '{env} – Stacks – {name}' (regression guard)."""
     from custom_components.dockhand.helpers import _stack_device
 
-    info = _stack_device(STACK["name"], ENV_ID, ENV_NAME, BASE_URL)
+    info = _stack_device(None, ENTRY_ID, STACK["name"], ENV_ID, ENV_NAME, BASE_URL)
     assert info["name"] == f"{ENV_NAME} \u2013 Stacks \u2013 {STACK['name']}"
 
 
@@ -2244,7 +2252,7 @@ def test_network_entity_under_group_device():
         _slow_coord(), ENTRY_ID, ENV_ID, ENV_NAME, BASE_URL, NETWORK
     )
     idents = sensor.device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Networks") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Networks") in idents
     assert (DOMAIN, f"network_{NETWORK['id']}") not in idents
 
 
@@ -2254,7 +2262,7 @@ def test_volume_entity_under_group_device():
         _slow_coord(), ENTRY_ID, ENV_ID, ENV_NAME, BASE_URL, VOLUME
     )
     idents = sensor.device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Volumes") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Volumes") in idents
 
 
 def test_image_entity_under_group_device():
@@ -2263,7 +2271,7 @@ def test_image_entity_under_group_device():
         _slow_coord(), ENTRY_ID, ENV_ID, ENV_NAME, BASE_URL, IMAGE
     )
     idents = sensor.device_info.get("identifiers", set())
-    assert (DOMAIN, f"env_{ENV_ID}_Images") in idents
+    assert (DOMAIN, f"{ENTRY_ID}_env_{ENV_ID}_Images") in idents
 
 
 # ===========================================================================
@@ -2384,6 +2392,7 @@ def _make_image_setup_entry(hass, images):
         update_coordinator=None,
         client=MagicMock(),
         known_entity_ids=set(),
+        pending_readd_entity_ids=set(),
     )
     return entry
 
@@ -3041,6 +3050,7 @@ def _make_container_stats_setup_entry(hass, enable_container_stats):
         update_coordinator=None,
         client=MagicMock(),
         known_entity_ids=set(),
+        pending_readd_entity_ids=set(),
     )
     return entry
 

@@ -31,6 +31,138 @@
   the full release page; for anything else, just the link is shown. Nothing
   is shown when none of these resolve (e.g. unlabelled Docker Hub images).
 
+## [1.9.4] — 2026-09-08
+
+### Fixed
+
+- **Duplicate device / entity errors ~60 s after Docker daemon recovery** (issue #34).
+  When the Hawser agent is online but the Docker daemon is temporarily unreachable,
+  the containers API returns an empty list with HTTP 200 and no fetch exception. The
+  previous logic treated that "silent empty" as confirmed ground truth and removed all
+  container devices for the environment via `_cleanup_stale_registry`; when Docker
+  recovered ~60 s later the devices were re-added, producing
+  `"unique ID … already registered"` errors in the log.
+
+  Fixed with a stats cross-validation gate in `_build_live_sets`: before adding an
+  environment to `containers_fetch_ok_env_ids`, the code now checks whether
+  `stats.containers.total > 0` while the containers list is empty. That combination
+  is the fingerprint of the Hawser-online / Docker-unreachable scenario (a genuinely
+  empty environment has `stats.containers.total == 0` as well). When the mismatch is
+  detected, the environment is excluded from `containers_fetch_ok_env_ids` for that
+  cycle — preventing cleanup — and a DEBUG log entry is emitted. When Docker recovers
+  and the API returns actual containers, the cross-validation passes and normal
+  operation resumes. Environments that truly have no containers (stats confirms zero)
+  are still cleaned up correctly.
+
+### Tests
+
+- Five new tests covering the issue #34 fix: the root-cause Hawser scenario
+  (`stats.total > 0`, containers list empty), entity-level preservation, genuine empty
+  environment (stats confirms zero → cleanup proceeds), missing `containers` stats key,
+  and a non-empty list that overrides any stats mismatch.
+
+- **PHCC bumped to 0.13.363** (tracks HA 2026.7.8). Updated deprecated test-side
+  registry API calls that became hard failures under this release:
+  - `reg.devices.get_devices_for_config_entry_id(…)` → `dr.async_entries_for_config_entry(dr.async_get(hass), …)`
+    in the `_identifiers()` helper (`test_init.py`), two helpers (`_device_ids`,
+    `_device_by_id_suffix`) in `test_helpers.py`, and five inline test functions.
+  - `reg.async_update_device(…, add_config_entry_id=…)` removed from
+    `test_removing_images_group_device_cascades_entity_removal`; devices belong to a
+    single config entry in the new registry model and the call was already redundant.
+  - `mock_dr` fixture updated to mock `async_get_device` (single entry or None return)
+    matching the signature used in production.
+
+## [1.9.3] — 2026-09-08
+
+### Fixed
+
+- **HA deprecation warning for `via_device` parameter eliminated** (detected by HA's
+  integration audit: `"calls device_registry.async_get_or_create with a deprecated
+  via_device parameter; use via_device_id instead"`). All device-hierarchy parent links
+  previously expressed as `via_device=(DOMAIN, identifier_string)` tuples have been
+  migrated to `via_device_id=<registry_uuid>`. A new `_device_entry_id()` helper
+  performs the registry lookup; when the parent device is not yet registered (including
+  unit-test contexts where `hass` is not available), `via_device_id` is simply omitted
+  rather than falling back to the deprecated form. Parent devices are always registered
+  before children in `_ensure_env_devices` / `_ensure_hub_devices`, so the lookup
+  succeeds in all real (non-test) scenarios. This suppresses the deprecation warning
+  that would have become a hard failure in HA 2027.8.0.
+
+- **Duplicate update entity registration errors after applying container updates**
+  (issue observed in 1.9.1/1.9.2 logs: `"Platform dockhand does not generate unique
+  IDs. ID … already exists — ignoring …"`). These errors appeared immediately after
+  updating 2+ containers whose entities had previously been briefly removed from the
+  HA entity registry mid-session (the normal effect of a container disappearing during
+  its own pull-and-recreate). The root cause was a race in `already_registered()`: when
+  cleanup removed an entity from the registry, the guard discarded its key from
+  `known_ids` and returned False — allowing the caller to schedule a re-add task via
+  `async_add_entities`. But `async_add_entities` is fire-and-forget (HA schedules the
+  work as an asyncio task that hasn't run yet). If a second coordinator refresh fired
+  before that task completed — the common case when multiple concurrent
+  `async_install()` calls each trigger `coordinator.async_refresh()` after their
+  install finishes — the second firing saw the key absent from `known_ids`, added it,
+  and scheduled a second re-add for the same entity. Both tasks eventually ran; the
+  second found the entity already loaded in the platform and HA logged the error.
+
+  Fixed by adding a dedicated `pending_readd_entity_ids: set[str]` field to
+  `DockhandData` (runtime_data) and an optional `pending_readd_ids` parameter to
+  `already_registered()`. When cleanup detects a registry gap for an entity this
+  session has previously added, the key is marked in `pending_readd_entity_ids` and
+  the re-add proceeds; subsequent calls during the same coordinator cycle that see the
+  same gap return True immediately (one re-add is already in flight — skip). The key
+  is cleared from pending once the entity is confirmed live in the registry again. The
+  primary `known_ids` key is never discarded — it accurately tracks "this session
+  added this entity" throughout — preventing the loss of the deduplication guard that
+  caused the original race. All platform call sites (`update.py`, `sensor.py`,
+  `switch.py`, `button.py`, `binary_sensor.py`, `number.py`, `select.py`) pass the
+  new set.
+
+## [1.9.2] — 2026-09-01
+
+### Fixed
+
+- **Transient Dockhand 401 responses no longer immediately trigger a re-authentication
+  prompt** (issue #18). Previously, a single 401 on the fast coordinator's first API
+  call would surface `ConfigEntryAuthFailed` right away — prompting the user to
+  re-enter credentials that hadn't actually changed. The integration now retries up to
+  twice (waiting 5 s then 25 s) before concluding the token is genuinely invalid and
+  surfacing the re-auth dialog. If the token recovers — as it reliably does when the
+  cause is a brief Dockhand restart or Hawser connectivity hiccup rather than a
+  revoked token — the failure is logged and the poll continues normally without
+  disturbing the user. If all three attempts return 401, re-auth is surfaced as before.
+  Non-auth failures (network errors, 5xx, etc.) still propagate immediately and are
+  unaffected by this change.
+
+- **The specific endpoint and response body are now logged when a 401 is received**,
+  making future occurrences easier to diagnose — the log now shows which API call
+  returned 401 and what Dockhand said in the response body, rather than only "token
+  invalid or revoked."
+
+## [1.9.1] — 2026-08-31
+
+**ha-dockhand-cards users:** the device identifier format change below requires
+ha-dockhand-cards 1.2.1 or later. Install it before (or immediately after)
+upgrading ha-dockhand to restore card functionality.
+
+### Fixed
+
+- **Device identifier collisions when two Dockhand instances are configured in the same
+  Home Assistant installation** (issue #28). Each Dockhand config entry now scopes its
+  device identifiers with its own `entry_id` prefix (e.g. `env_1` becomes
+  `abc12345-..._env_1`), so two entries that each manage an environment numbered `1`
+  no longer merge into the same device in HA's device registry. This pattern matches
+  how unique entity IDs have been scoped since v1.7.3 — the device identifier side was
+  simply missed at the time.
+
+  A one-time migration runs automatically on upgrade: every device belonging to this
+  config entry that still has the old bare identifier is renamed to the new
+  `{entry_id}_…` form. No action needed; existing devices and their entity_ids are
+  unchanged — only the internal registry key updates.
+
+  The migration runs before device pre-registration in the setup sequence, so
+  the registry is already in the correct state by the time `async_get_or_create`
+  is called — no `DeviceIdentifierCollisionError` on first boot after upgrade.
+
 ## [1.9.0] — 2026-07-30
 
 ### Added
@@ -959,6 +1091,11 @@ Initial stable release.
 
 [Unreleased]: https://github.com/raetha/ha-dockhand/compare/v1.10.0...HEAD
 [1.10.0]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...v1.10.0
+[1.9.4]: https://github.com/raetha/ha-dockhand/compare/v1.9.3...v1.9.4
+[1.9.3]: https://github.com/raetha/ha-dockhand/compare/v1.9.2...v1.9.3
+[1.9.2]: https://github.com/raetha/ha-dockhand/compare/v1.9.1...v1.9.2
+[1.9.1]: https://github.com/raetha/ha-dockhand/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/raetha/ha-dockhand/compare/v1.8.2...v1.9.0
 [1.8.2]: https://github.com/raetha/ha-dockhand/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/raetha/ha-dockhand/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/raetha/ha-dockhand/compare/v1.7.4...v1.8.0

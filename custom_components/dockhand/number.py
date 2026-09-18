@@ -40,8 +40,6 @@ from a container failing afterward) surface as a repair issue too, since a
 warning means part of the request may not have been applied as asked.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -94,6 +92,7 @@ async def async_setup_entry(
     base_url: str = entry.data.get(CONF_API_URL, "")
 
     known_ids = entry.runtime_data.known_entity_ids
+    pending_readd_ids = entry.runtime_data.pending_readd_entity_ids
 
     def _build_entities() -> list[NumberEntity]:
         new: list[NumberEntity] = []
@@ -120,7 +119,11 @@ async def async_setup_entry(
                     fast, slow, entry.entry_id, env_id, env_name, base_url, name
                 )
                 if already_registered(
-                    hass, known_ids, "number", memory_number.unique_id
+                    hass,
+                    known_ids,
+                    "number",
+                    memory_number.unique_id,
+                    pending_readd_ids=pending_readd_ids,
                 ):
                     continue
                 new.append(memory_number)
