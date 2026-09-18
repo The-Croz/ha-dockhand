@@ -14,7 +14,7 @@ Covers:
 - available: container in fast data, container missing, env missing,
   coordinator unhealthy (last_update_success=False)
 - release_summary: always None (no longer populated, consistent with HACS)
-- async_release_notes: image name, ha-alert types verified (warning/info),
+- async_release_notes: image name omitted, ha-alert types verified (warning/info),
   scanner info note, system container warning, update disabled, no
   container, scanner+system combo, systemContainer priority over
   updateDisabled, changelog link when resolvable from image/labels — all
@@ -433,7 +433,7 @@ def test_supported_features_work_without_tier2_data_at_all():
 
 def test_release_summary_always_none():
     # release_summary is no longer populated — consistent with HACS convention.
-    # Image name and warnings appear in async_release_notes instead.
+    # Warnings appear in async_release_notes instead.
     assert _make_entity(containers=[CONTAINER_NORMAL]).release_summary is None
     assert (
         _make_entity(
@@ -450,11 +450,14 @@ def test_release_summary_always_none():
 # ---------------------------------------------------------------------------
 
 
-async def test_release_notes_includes_image_name():
-    entity = _make_entity(containers=[CONTAINER_NORMAL])
+async def test_release_notes_omits_image_name():
+    # The image reference is already visible elsewhere on the entity — it
+    # isn't repeated at the top of the release notes.
+    entity = _make_entity(containers=[CONTAINER_NORMAL], scanner_enabled=True)
     notes = await entity.async_release_notes()
     assert notes is not None
-    assert "nginx:latest" in notes
+    assert "nginx:latest" not in notes
+    assert "Image:" not in notes
 
 
 async def test_release_notes_includes_scanner_info():
@@ -509,10 +512,11 @@ async def test_release_notes_none_when_container_gone():
 
 
 async def test_release_notes_work_without_tier2_data_at_all():
-    entity = _make_entity(containers=[CONTAINER_NORMAL], update_coordinator=None)
+    container = {**CONTAINER_NORMAL, "image": "ghcr.io/imagegenius/immich:openvino"}
+    entity = _make_entity(containers=[container], update_coordinator=None)
     notes = await entity.async_release_notes()
     assert notes is not None
-    assert "nginx:latest" in notes
+    assert "https://github.com/imagegenius/immich/releases" in notes
 
 
 async def test_release_notes_includes_changelog_link_when_resolvable():
@@ -527,8 +531,8 @@ async def test_release_notes_omits_changelog_link_when_unresolvable():
     """Docker Hub image with no source label — no changelog URL to show."""
     entity = _make_entity(containers=[CONTAINER_NORMAL])
     notes = await entity.async_release_notes()
-    assert notes is not None
-    assert "release notes" not in notes.lower()
+    # Nothing else to show for a plain container either, so no notes at all.
+    assert notes is None
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +646,14 @@ async def test_release_notes_no_github_fetch_for_non_github_changelog_url():
     assert "https://example.com/notes" in notes
 
 
+def _get_ctx(resp):
+    """Mock for session.get(...) used as an async context manager."""
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=resp)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=ctx)
+
+
 async def test_fetch_github_latest_release_returns_none_on_non_200():
     from custom_components.dockhand.update import _fetch_github_latest_release
 
@@ -649,7 +661,7 @@ async def test_fetch_github_latest_release_returns_none_on_non_200():
     session = MagicMock()
     resp = AsyncMock()
     resp.status = 404
-    session.get = AsyncMock(return_value=resp)
+    session.get = _get_ctx(resp)
     with patch(
         "custom_components.dockhand.update.async_get_clientsession",
         return_value=session,
@@ -678,7 +690,7 @@ async def test_fetch_github_latest_release_returns_json_on_success():
     resp = AsyncMock()
     resp.status = 200
     resp.json = AsyncMock(return_value=FAKE_RELEASE)
-    session.get = AsyncMock(return_value=resp)
+    session.get = _get_ctx(resp)
     with patch(
         "custom_components.dockhand.update.async_get_clientsession",
         return_value=session,
@@ -1012,6 +1024,8 @@ def _make_setup_env(containers=None, update_check_enabled=True, options=None):
     entry.entry_id = ENTRY_ID
     entry.runtime_data.fast_coordinator = fast_coord
     entry.runtime_data.update_coordinator = None
+    entry.runtime_data.known_entity_ids = set()
+    entry.runtime_data.pending_readd_entity_ids = set()
     entry.async_on_unload = MagicMock()
     entry.options = options if options is not None else {}
 
@@ -1095,7 +1109,6 @@ async def test_entity_not_duplicated_within_the_same_session(hass):
     mock_entry = MockConfigEntry(domain="dockhand", entry_id=ENTRY_ID, title="test")
     mock_entry.add_to_hass(hass)
     entry.entry_id = mock_entry.entry_id
-    entry.runtime_data.known_entity_ids = set()
     ent_registry = er.async_get(hass)
     uid = f"{ENTRY_ID}_{ENV_ID}_update_{CONTAINER_NAME}"
 
@@ -1170,6 +1183,82 @@ async def test_entity_recreated_within_the_same_session_if_removed(hass):
     assert len(add_entities_after_removal.call_args.args[0]) == 1
 
 
+async def test_entity_not_double_scheduled_when_add_fires_twice_before_task_runs(hass):
+    """Regression: when cleanup removes an update entity from the registry
+    mid-session, the re-add path in already_registered() must not schedule
+    two concurrent async_add_entities calls for the same unique_id.
+
+    The race: async_add_entities() is fire-and-forget (HA schedules the
+    work as a task). If _add_new_entities fires a second time before the
+    first task has landed — e.g. because a second coordinator refresh
+    completes before the event-loop processes the first re-add task, which
+    is exactly what happens when multiple async_install() calls each
+    trigger coordinator.async_refresh() at nearly the same time — the
+    second call also sees the entity absent from the registry and schedules
+    another re-add. Both tasks eventually run; the second one finds the
+    entity already loaded in the platform and HA logs:
+      "Platform dockhand does not generate unique IDs. ID … already exists"
+
+    The fix (pending_readd_entity_ids in DockhandData): after the first
+    detection of "entity gone from registry," the key is added to the
+    dedicated pending_readd_entity_ids set. Subsequent calls that see the
+    same gap while the key is in pending_readd_ids return True (skip)
+    instead of False (re-add), so the second concurrent firing never
+    schedules a duplicate task. The primary key is never removed from
+    known_entity_ids — it accurately tracks "this session added this
+    entity" throughout.
+
+    Simulated here by calling _add_new_entities directly twice in sequence
+    with the entity absent from the registry between both calls, verifying
+    that async_add_entities is called exactly once (not twice).
+    """
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    fast_coord, entry, _ = _make_setup_env()
+    mock_entry = MockConfigEntry(domain="dockhand", entry_id=ENTRY_ID, title="test")
+    mock_entry.add_to_hass(hass)
+    entry.entry_id = mock_entry.entry_id
+    ent_registry = er.async_get(hass)
+    uid = f"{ENTRY_ID}_{ENV_ID}_update_{CONTAINER_NAME}"
+
+    # Phase 1: entity added this session — populates known_entity_ids
+    add_initial = MagicMock()
+    await async_setup_entry(hass, entry, add_initial)
+    add_initial.assert_called_once()
+
+    # Seed the registry (stands in for what async_add_entities does)
+    entity_entry = ent_registry.async_get_or_create(
+        "update", "dockhand", uid, config_entry=mock_entry
+    )
+
+    # Phase 2: simulate cleanup removing the entity from the registry
+    # (e.g. container briefly absent during a pull-and-recreate update)
+    ent_registry.async_remove(entity_entry.entity_id)
+    assert ent_registry.async_get_entity_id("update", "dockhand", uid) is None
+
+    # Phase 3: _add_new_entities fires twice in rapid succession before the
+    # first async_add_entities task has a chance to re-add the entity to
+    # the registry. This simulates two coordinator refreshes landing back-
+    # to-back (four concurrent async_install() calls each calling
+    # coordinator.async_refresh() are the common trigger in production).
+    add_concurrent = MagicMock()
+    await async_setup_entry(hass, entry, add_concurrent)  # first firing
+    await async_setup_entry(
+        hass, entry, add_concurrent
+    )  # second firing, entity still absent
+
+    # async_add_entities must have been called exactly once — not twice.
+    # Two calls would cause HA's "ID already exists" platform error when
+    # both tasks land (the second finds the entity already loaded).
+    assert add_concurrent.call_count == 1, (
+        f"async_add_entities called {add_concurrent.call_count} times — "
+        "expected 1; a second call schedules a duplicate re-add that "
+        "triggers HA's 'Platform does not generate unique IDs' error"
+    )
+    assert len(add_concurrent.call_args.args[0]) == 1
+
+
 # Note: removal when updateCheckEnabled turns off, or a container
 # disappears, is NOT tested here — that logic now lives entirely in
 # __init__.py's _cleanup_stale_registry/_build_live_sets, alongside every
@@ -1184,7 +1273,7 @@ def test_unique_id_format():
 def test_device_info_references_container_device():
     entity = _make_entity()
     identifiers = entity._attr_device_info["identifiers"]
-    assert list(identifiers)[0][1] == f"container_{ENV_ID}_{CONTAINER_NAME}"
+    assert list(identifiers)[0][1] == f"{ENTRY_ID}_container_{ENV_ID}_{CONTAINER_NAME}"
 
 
 def test_has_entity_name():

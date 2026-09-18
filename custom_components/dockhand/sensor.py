@@ -107,11 +107,15 @@ async def async_setup_entry(
 
     known_ids = entry.runtime_data.known_entity_ids
 
+    pending_readd_ids = entry.runtime_data.pending_readd_entity_ids
+
     def _already_registered(domain: str, unique_id: str) -> bool:
         # See helpers.py's already_registered() for the full reasoning —
         # moved there once switch.py/number.py/select.py/button.py/
         # binary_sensor.py needed the exact same check too.
-        return already_registered(hass, known_ids, domain, unique_id)
+        return already_registered(
+            hass, known_ids, domain, unique_id, pending_readd_ids=pending_readd_ids
+        )
 
     def _build_fast_entities() -> list[SensorEntity]:
         """Return new fast-coordinator entities not yet registered."""
@@ -517,7 +521,13 @@ class BaseFastEnvSensor(CoordinatorEntity[DockhandFastCoordinator], SensorEntity
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _env_device(self._env_id, self._env_name, self._base_url, self._stats())
+        return _env_device(
+            self._entry_id,
+            self._env_id,
+            self._env_name,
+            self._base_url,
+            self._stats(),
+        )
 
 
 class BaseFastContainerSensor(CoordinatorEntity[DockhandFastCoordinator], SensorEntity):
@@ -563,6 +573,8 @@ class BaseFastContainerSensor(CoordinatorEntity[DockhandFastCoordinator], Sensor
     def device_info(self) -> DeviceInfo:
         c = self._container()
         return _container_device(
+            getattr(self, "hass", None),
+            self._entry_id,
             self._container_name,
             self._env_id,
             self._env_name,
@@ -652,6 +664,8 @@ class BaseFastStackSensor(CoordinatorEntity[DockhandFastCoordinator], SensorEnti
     def device_info(self) -> DeviceInfo:
         s = self._stack()
         return _stack_device(
+            getattr(self, "hass", None),
+            self._entry_id,
             self._stack_name,
             self._env_id,
             self._env_name,
@@ -1667,7 +1681,7 @@ class BaseSlowEnvSensor(CoordinatorEntity[DockhandSlowCoordinator], SensorEntity
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _env_device(self._env_id, self._env_name, self._base_url)
+        return _env_device(self._entry_id, self._env_id, self._env_name, self._base_url)
 
 
 # --------------------------------------------------------------------------- #
@@ -2042,7 +2056,13 @@ class DockhandImageSensor(BaseSlowEnvSensor):
     @property
     def device_info(self) -> DeviceInfo:
         """All image entities live under the per-env Images group device."""
-        return _image_group_device(self._env_id, self._env_name, self._base_url)
+        return _image_group_device(
+            getattr(self, "hass", None),
+            self._entry_id,
+            self._env_id,
+            self._env_name,
+            self._base_url,
+        )
 
 
 class DockhandNetworkSensor(BaseSlowEnvSensor):
@@ -2108,7 +2128,13 @@ class DockhandNetworkSensor(BaseSlowEnvSensor):
     @property
     def device_info(self) -> DeviceInfo:
         """All network entities live under the per-env Networks group device."""
-        return _network_group_device(self._env_id, self._env_name, self._base_url)
+        return _network_group_device(
+            getattr(self, "hass", None),
+            self._entry_id,
+            self._env_id,
+            self._env_name,
+            self._base_url,
+        )
 
 
 class DockhandVolumeSensor(BaseSlowEnvSensor):
@@ -2183,7 +2209,13 @@ class DockhandVolumeSensor(BaseSlowEnvSensor):
     @property
     def device_info(self) -> DeviceInfo:
         """All volume entities live under the per-env Volumes group device."""
-        return _volume_group_device(self._env_id, self._env_name, self._base_url)
+        return _volume_group_device(
+            getattr(self, "hass", None),
+            self._entry_id,
+            self._env_id,
+            self._env_name,
+            self._base_url,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -2221,6 +2253,8 @@ class _BaseScheduleSensor(CoordinatorEntity[DockhandSlowCoordinator], SensorEnti
     @property
     def device_info(self) -> DeviceInfo:
         return _sched_device(
+            getattr(self, "hass", None),
+            self._entry_id,
             self._sched_id,
             self._sched_type,
             self._sched_name,
@@ -2385,6 +2419,8 @@ class BaseSlowGitStackSensor(CoordinatorEntity[DockhandSlowCoordinator], SensorE
     @property
     def device_info(self) -> DeviceInfo:
         return _stack_device(
+            getattr(self, "hass", None),
+            self._entry_id,
             self._stack_name,
             self._env_id,
             self._env_name,

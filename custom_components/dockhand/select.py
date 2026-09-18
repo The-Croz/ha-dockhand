@@ -8,8 +8,6 @@ auto-revert safety check here — only the shared warnings-to-repair-issue
 handling.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
@@ -54,6 +52,7 @@ async def async_setup_entry(
     slow = data.slow_coordinator
 
     known_ids = entry.runtime_data.known_entity_ids
+    pending_readd_ids = entry.runtime_data.pending_readd_entity_ids
 
     def _build_entities() -> list[SelectEntity]:
         new: list[SelectEntity] = []
@@ -73,7 +72,13 @@ async def async_setup_entry(
                 entity = DockhandContainerRestartPolicySelect(
                     fast, slow, entry.entry_id, env_id, name
                 )
-                if already_registered(hass, known_ids, "select", entity.unique_id):
+                if already_registered(
+                    hass,
+                    known_ids,
+                    "select",
+                    entity.unique_id,
+                    pending_readd_ids=pending_readd_ids,
+                ):
                     continue
                 new.append(entity)
         return new
@@ -116,7 +121,7 @@ class DockhandContainerRestartPolicySelect(
             f"{entry_id}_{env_id}_container_{container_name}_restart_policy"
         )
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"container_{env_id}_{container_name}")},
+            identifiers={(DOMAIN, f"{entry_id}_container_{env_id}_{container_name}")},
         )
 
     def _container(self) -> dict | None:

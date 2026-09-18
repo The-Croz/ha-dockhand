@@ -218,10 +218,10 @@ async def _fetch_github_latest_release(
     url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
         session = async_get_clientsession(hass)
-        async with asyncio.timeout(_GITHUB_API_TIMEOUT):
-            resp = await session.get(
-                url, headers={"Accept": "application/vnd.github+json"}
-            )
+        async with (
+            asyncio.timeout(_GITHUB_API_TIMEOUT),
+            session.get(url, headers={"Accept": "application/vnd.github+json"}) as resp,
+        ):
             if resp.status != 200:
                 return None
             return await resp.json()
@@ -292,7 +292,13 @@ async def async_setup_entry(
                     env_name=env_name,
                     container_name=container_name,
                 )
-                if already_registered(hass, known_ids, "update", entity.unique_id):
+                if already_registered(
+                    hass,
+                    known_ids,
+                    "update",
+                    entity.unique_id,
+                    pending_readd_ids=entry.runtime_data.pending_readd_entity_ids,
+                ):
                     continue
                 new_entities.append(entity)
 
@@ -340,7 +346,7 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
 
         self._attr_unique_id = f"{entry_id}_{env_id}_update_{container_name}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"container_{env_id}_{container_name}")},
+            identifiers={(DOMAIN, f"{entry_id}_container_{env_id}_{container_name}")},
         )
 
         self._update_supported_features()
@@ -485,11 +491,7 @@ class ContainerUpdateEntity(CoordinatorEntity[DockhandFastCoordinator], UpdateEn
             return None
         parts = []
 
-        image_name = c.get("image")
-        if image_name:
-            parts.append(f"Image: {image_name}")
-
-        changelog_url = _resolve_changelog_url(image_name, c.get("labels"))
+        changelog_url = _resolve_changelog_url(c.get("image"), c.get("labels"))
         changelog_section = await self._changelog_section(changelog_url)
         if changelog_section:
             parts.append(changelog_section)

@@ -84,12 +84,18 @@ allowlist (`release-assets.githubusercontent.com`) and takes seconds instead
 of tens of minutes:
 
 ```bash
-pip install uv --break-system-packages
-uv python install 3.14        # fetches a prebuilt 3.14.x, no compiling
+pip install --upgrade uv --break-system-packages   # upgrade from sandbox's stale uv (≥0.12.x needed for 3.14.x)
+uv python install 3.14        # fetches a prebuilt 3.14.x (e.g. 3.14.7), no compiling
 uv venv --python 3.14 .venv
 uv pip install -r requirements_test.txt --python .venv/bin/python
 bash scripts/run_tests.sh --full --venv .venv
 ```
+
+**Important:** The sandbox ships an outdated `uv` (e.g. v0.8.x) at
+`/root/.local/bin/uv` that only resolves `3.14` to a release candidate.
+The `pip install --upgrade uv` step installs a current uv at
+`/usr/local/bin/uv` which takes precedence and fetches the final 3.14.x
+release. Skip this step and you'll get rc2 instead of the real thing.
 
 This gives Claude a real, working Python 3.14.x with PHCC installed, so the
 full pytest suite (not just ruff + AST) can run in-sandbox routinely. Docker
@@ -149,3 +155,22 @@ custom_components/dockhand/
 ├── update.py            # Container image update entities
 └── translations/        # One file per language, en.json = strings.json
 ```
+
+## Claude sandbox: packaging and delivery
+
+When delivering changes from the Claude sandbox, always package the **entire
+repo tree** as a zip — not a patch file, not a zip of only `custom_components/`.
+The zip lets the user diff, review, and commit in their own clone.
+
+```bash
+cd /tmp/ha-dockhand
+zip -r /path/to/ha-dockhand-X.Y.Z.zip . \
+  --exclude ".git/*" --exclude ".venv/*" --exclude ".venv-full/*" \
+  --exclude ".venv-sandbox/*" --exclude "__pycache__/*" \
+  --exclude "*.pyc" --exclude ".pytest_cache/*"
+```
+
+Then `SendUserFile` the `.zip`. The user extracts it, compares against their
+clone (e.g. `diff -rq --exclude=".git" repo/ extracted/`), cherry-picks the
+changes, and commits. Always run the full test suite (`bash scripts/run_tests.sh
+--full --venv .venv`) and confirm all checks pass before packaging.
